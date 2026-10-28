@@ -118,6 +118,7 @@ export class Capri {
     this.canCross = null; // (side, y) => is there another screen past that side's edge, at that height
     this.onCross = null;  // async (side, at) => moves her window over to it: { y } there, or null
     this.onScreenOf = null; // async (cursor) => her window moved to the screen the pointer is on: the pointer there
+    this.onDragOut = null;  // async () => held, the pointer left her screen: her window moved to the one it's on, the pointer there (or null)
 
     this.alphaMap = this.buildAlphaMap(image);
     this.hull = buildHull(this.alphaMap);
@@ -1741,27 +1742,46 @@ export class Capri {
       this.track = [{ x: e.clientX, y: e.clientY, t: performance.now() }];
       if (thrown) this.pickUp(down);
     });
+    // held where the pointer is (her window's coordinates), the point you hold her by right under it
+    const hold = (x, y) => {
+      this.pos = {
+        x: clamp(down.pos.x + x - down.x, 40, this.view.w - 40),
+        y: clamp(down.pos.y + y - down.y, SPRITE.height * this.scale * 0.5, this.floor),
+      };
+      this.p.glitchSeed = Math.random() * 100;
+      this.place();
+    };
+    // held out past the edge of her screen onto another one: her window goes there, she stays in
+    // your hand (moves meanwhile wait, her window is on its way)
+    let crossing = false;
+    const crossOver = async () => {
+      crossing = true;
+      const cursor = await this.onDragOut().catch(() => null);
+      crossing = false;
+      if (cursor && down && this.dragging) hold(cursor.x, cursor.y);
+    };
     window.addEventListener('mousemove', (e) => {
       this.mouse = { x: e.clientX, y: e.clientY }; // a window she's in watches it
+      if (down && !(e.buttons & 1)) {
+        release(); // the button came up where her window never heard of it
+        return;
+      }
       if (down) {
         const now = performance.now();
         this.track.push({ x: e.clientX, y: e.clientY, t: now });
         while (this.track.length > 2 && now - this.track[0].t > 160) this.track.shift();
         const dx = e.clientX - down.x, dy = e.clientY - down.y;
         if (!this.dragging && Math.hypot(dx, dy) > 5 && !this.busy) this.pickUp(down);
-        if (this.dragging) {
-          this.pos = {
-            x: clamp(down.pos.x + dx, 40, this.view.w - 40),
-            y: clamp(down.pos.y + dy, SPRITE.height * this.scale * 0.5, this.floor),
-          };
-          this.p.glitchSeed = Math.random() * 100;
-          this.place();
+        if (this.dragging && !crossing) {
+          hold(e.clientX, e.clientY);
+          const out = e.clientX < 0 || e.clientY < 0 || e.clientX >= innerWidth || e.clientY >= innerHeight;
+          if (out && this.onDragOut) crossOver();
         }
         return;
       }
       this.notice(e.clientX, e.clientY);
     });
-    window.addEventListener('mouseup', () => {
+    const release = () => {
       if (!down) return;
       const wasDragging = this.dragging;
       down = null;
@@ -1780,7 +1800,8 @@ export class Capri {
       this.setStance('stand'); // upright again, under where you held her
       this.onTeleport?.('end');
       this.drop();
-    });
+    };
+    window.addEventListener('mouseup', release);
   }
 
   // How fast the pointer holding her was going just now (px/s): none if it had stopped.

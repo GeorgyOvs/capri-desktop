@@ -561,6 +561,13 @@ async function boot() {
     await moveTo(cursor.display);
     return host.cursor();
   }, { toPointer: true });
+  // held and carried over onto another of your screens: her window goes along
+  capri.onDragOut = async () => {
+    const at = await host.cursor();
+    if (!screens || at.inside || at.display == null || at.display === screens.current) return null;
+    if (!(await moveTo(at.display))) return null;
+    return host.cursor();
+  };
   // to screen `id`: jumping over the shared edge if there's one at her height, else teleporting
   const goToScreen = async (id) => {
     if (!screens || id === screens.current) return;
